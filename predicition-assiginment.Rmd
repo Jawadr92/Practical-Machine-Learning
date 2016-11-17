@@ -1,0 +1,248 @@
+
+<div id="header">
+<h1 class="title">Prediction Assignment Writeup</h1>
+<h4 class="author"><em>Jawad Ridha</em></h4>
+</div>
+
+<div id="processing-data" class="section level2">
+<h2>Processing Data</h2>
+<p>First, I downloaded the training and test datasets and then I loaded them through the <code>read.csv</code> function. During my exploratory data analysis, I found blank values, “NA”, and “#DIV/0!” show up in the data columns so I decided to treat them all as <code>NA</code> values.</p>
+<pre class="r"><code><em># loading the package required for this project
+library(caret)
+# this code is to the download data 
+if(!file.exists(&quot;pml-training.csv&quot;)){
+    download.file(&quot;https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv&quot;, 
+        destfile = &quot;pml-training.csv&quot;, method = &quot;curl&quot;)
+}
+if(!file.exists(&quot;pml-testing.csv&quot;)){
+    download.file(&quot;https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv&quot;, 
+        destfile = &quot;pml-testing.csv&quot;, method = &quot;curl&quot;)
+}
+# loading the data
+train &lt;- read.csv(&quot;pml-training.csv&quot;, header = TRUE, na.strings=c(&quot;&quot;,&quot;NA&quot;, &quot;#DIV/0!&quot;))
+test &lt;- read.csv(&quot;pml-testing.csv&quot;, header = TRUE, na.strings=c(&quot;&quot;,&quot;NA&quot;, &quot;#DIV/0!&quot;))</em></code></pre>
+<p>In order for me to run the machine learning algorithms, the features used cannot contain any <code>NA</code> values. To see which variables/features should be used, I calculated the percentage of NA’s for each column.</p>
+<pre class="r"><code><em># see error percentage 
+NAPercent &lt;- round(colMeans(is.na(train)), 2)
+table(NAPercent)</em></code></pre>
+<pre><code>## NAPercent
+##    0 0.98    1 
+##   60   94    6</code></pre>
+<p>From the above, we can see that only 60 variables have complete data (based on the NAPercent), so the variables above, I will use to build the prediction algorithm. The reason why i removed the first variable here because it is the row index from the csv file and not a true variable.</p>
+<pre class="r"><code><em># find the index of the complete columns minus the first 
+index &lt;- which(NAPercent==0)[-1]
+# subset the data
+train &lt;- train[, index]
+test &lt;- test[, index]
+# this structure will allow you to see the data for the first 10 columns
+str(train[, 1:10])</em></code></pre>
+<pre><code>## 'data.frame':    19622 obs. of  10 variables:
+##  $ user_name           : Factor w/ 6 levels &quot;adelmo&quot;,&quot;carlitos&quot;,..: 2 2 2 2 2 2 2 2 2 2 ...
+##  $ raw_timestamp_part_1: int  1323084231 1323084231 1323084231 1323084232 1323084232 1323084232 1323084232 1323084232 1323084232 1323084232 ...
+##  $ raw_timestamp_part_2: int  788290 808298 820366 120339 196328 304277 368296 440390 484323 484434 ...
+##  $ cvtd_timestamp      : Factor w/ 20 levels &quot;02/12/2011 13:32&quot;,..: 9 9 9 9 9 9 9 9 9 9 ...
+##  $ new_window          : Factor w/ 2 levels &quot;no&quot;,&quot;yes&quot;: 1 1 1 1 1 1 1 1 1 1 ...
+##  $ num_window          : int  11 11 11 12 12 12 12 12 12 12 ...
+##  $ roll_belt           : num  1.41 1.41 1.42 1.48 1.48 1.45 1.42 1.42 1.43 1.45 ...
+##  $ pitch_belt          : num  8.07 8.07 8.07 8.05 8.07 8.06 8.09 8.13 8.16 8.17 ...
+##  $ yaw_belt            : num  -94.4 -94.4 -94.4 -94.4 -94.4 -94.4 -94.4 -94.4 -94.4 -94.4 ...
+##  $ total_accel_belt    : int  3 3 3 3 3 3 3 3 3 3 ...</code></pre>
+<p>From the structure of the data, we can see that the first 6 variables <code>user_name</code>, <code>raw_timestamp_part_1</code>, <code>raw_timestamp_part_2</code>, <code>cvtd_timestamp</code>, <code>new_window</code>, <code>num_window</code> are simply administrative parameters and are unlikely to help us predict the activity the subjects are performing. Therefore, we are going to leave those 6 columns out before we build the algorithm. Also to make the columns easier to deal with, we will go ahead and convert all features to <code>numeric</code> class.</p>
+<pre class="r"><code><em># subset the data
+train &lt;- train[, -(1:6)]
+test &lt;- test[, -(1:6)]
+# convert all numerical data to class
+for(i in 1:(length(train)-1)){
+    train[,i] &lt;- as.numeric(train[,i])
+    test[,i] &lt;- as.numeric(test[,i])
+}</em></code></pre>
+</div>
+<div id="cross-validation" class="section level2">
+<h2>Cross Validation</h2>
+<p>For this project I will focus on using the two most widely-used and most accurate prediction algorithms.</p>
+<p>First I set the <code>test</code> set aside and split the <code>train</code> data into two sections for cross validation. I will then allocate 80% of the data to train the model and 20% to validate it.</p>
+<p>We expect that the out-of-bag (OOB) error rates returned by the models should be a good estimate for the out of sample error rate. Finally I will get actual estimates of error rates from the <strong>accuracies</strong> achieved by the models.</p>
+<pre class="r"><code><em># this will split train data set
+inTrain &lt;- createDataPartition(y=train$classe,p=0.8, list=FALSE)
+trainData &lt;- train[inTrain,]
+validation &lt;- train[-inTrain,]
+# this will print out the dimentions of the 3 data sets
+rbind(trainData = dim(trainData), validation = dim(validation), test = dim(test))</em></code></pre>
+<pre><code>##             [,1] [,2]
+## trainData  15699   53
+## validation  3923   53
+## test          20   53</code></pre>
+</div>
+<div id="comparing-model-and-results" class="section level2">
+<h2>Comparing Model and Results</h2>
+<p>First, I will use <strong>random forest</strong> to build the first model. Because the algorithm is computationally intensive, I will then leverage parallel processing using multiple cores through the <code>doMC</code> package</p>
+<pre class="r"><code><em># loading the doMC package 
+library(doMC)
+# set my cores 
+registerDoMC(cores = 8)
+# loading randomForest package
+library(randomForest)
+# this code will run the random forest algorithm on to the training data set
+rfFit &lt;- randomForest(classe~., data = trainData, method =&quot;rf&quot;, prox = TRUE)
+rfFit</em></code></pre>
+<pre><code>## 
+## Call:
+##  randomForest(formula = classe ~ ., data = trainData, method = &quot;rf&quot;,      prox = TRUE) 
+##                Type of random forest: classification
+##                      Number of trees: 500
+## No. of variables tried at each split: 7
+## 
+##         OOB estimate of  error rate: 0.43%
+## Confusion matrix:
+##      A    B    C    D    E  class.error
+## A 4462    2    0    0    0 0.0004480287
+## B   16 3018    4    0    0 0.0065832785
+## C    0    8 2725    5    0 0.0047479912
+## D    0    0   24 2546    3 0.0104935873
+## E    0    0    1    4 2881 0.0017325017</code></pre>
+<pre class="r"><code><em># use model to predict on validation data set
+rfPred &lt;- predict(rfFit, validation)
+# results predicted
+confusionMatrix(rfPred, validation$classe)</em></code></pre>
+<pre><code>## Confusion Matrix and Statistics
+## 
+##           Reference
+## Prediction    A    B    C    D    E
+##          A 1116    2    0    0    0
+##          B    0  756    3    0    0
+##          C    0    1  681    6    0
+##          D    0    0    0  637    1
+##          E    0    0    0    0  720
+## 
+## Overall Statistics
+##                                           
+##                Accuracy : 0.9967          
+##                  95% CI : (0.9943, 0.9982)
+##     No Information Rate : 0.2845          
+##     P-Value [Acc &gt; NIR] : &lt; 2.2e-16       
+##                                           
+##                   Kappa : 0.9958          
+##  Mcnemar's Test P-Value : NA              
+## 
+## Statistics by Class:
+## 
+##                      Class: A Class: B Class: C Class: D Class: E
+## Sensitivity            1.0000   0.9960   0.9956   0.9907   0.9986
+## Specificity            0.9993   0.9991   0.9978   0.9997   1.0000
+## Pos Pred Value         0.9982   0.9960   0.9898   0.9984   1.0000
+## Neg Pred Value         1.0000   0.9991   0.9991   0.9982   0.9997
+## Prevalence             0.2845   0.1935   0.1744   0.1639   0.1838
+## Detection Rate         0.2845   0.1927   0.1736   0.1624   0.1835
+## Detection Prevalence   0.2850   0.1935   0.1754   0.1626   0.1835
+## Balanced Accuracy      0.9996   0.9975   0.9967   0.9952   0.9993</code></pre>
+<p>Next, I will try the Generalized Boosted Regression Models.</p>
+<pre class="r"><code><em># run the generalized boosted regression model
+gbmFit &lt;- train(classe~., data = trainData, method =&quot;gbm&quot;, verbose = FALSE)
+gbmFit</em></code></pre>
+<pre><code>## Stochastic Gradient Boosting 
+## 
+## 15699 samples
+##    52 predictor
+##     5 classes: 'A', 'B', 'C', 'D', 'E' 
+## 
+## No pre-processing
+## Resampling: Bootstrapped (25 reps) 
+## 
+## Summary of sample sizes: 15699, 15699, 15699, 15699, 15699, 15699, ... 
+## 
+## Resampling results across tuning parameters:
+## 
+##   interaction.depth  n.trees  Accuracy   Kappa      Accuracy SD
+##   1                   50      0.7481717  0.6807386  0.007517094
+##   1                  100      0.8152710  0.7662110  0.004916848
+##   1                  150      0.8500706  0.8102767  0.004760952
+##   2                   50      0.8519370  0.8124713  0.005877966
+##   2                  100      0.9061600  0.8812564  0.004217447
+##   2                  150      0.9304904  0.9120490  0.003690489
+##   3                   50      0.8956435  0.8678982  0.004276404
+##   3                  100      0.9404469  0.9246541  0.004019593
+##   3                  150      0.9594901  0.9487596  0.003121579
+##   Kappa SD   
+##   0.009517534
+##   0.006225865
+##   0.006044945
+##   0.007440065
+##   0.005345304
+##   0.004675461
+##   0.005406066
+##   0.005087412
+##   0.003945901
+## 
+## Tuning parameter 'shrinkage' was held constant at a value of 0.1
+## Accuracy was used to select the optimal model using  the largest value.
+## The final values used for the model were n.trees = 150,
+##  interaction.depth = 3 and shrinkage = 0.1.</code></pre>
+<pre class="r"><code><em># use model to predict on validation data set
+gbmPred &lt;- predict(gbmFit, validation)
+# results predicted
+confusionMatrix(gbmPred, validation$classe)</em></code></pre>
+<pre><code>## Confusion Matrix and Statistics
+## 
+##           Reference
+## Prediction    A    B    C    D    E
+##          A 1095   25    0    3    2
+##          B   17  713   24    6    9
+##          C    2   21  652   26    6
+##          D    2    0    7  606    3
+##          E    0    0    1    2  701
+## 
+## Overall Statistics
+##                                           
+##                Accuracy : 0.9602          
+##                  95% CI : (0.9536, 0.9661)
+##     No Information Rate : 0.2845          
+##     P-Value [Acc &gt; NIR] : &lt; 2.2e-16       
+##                                           
+##                   Kappa : 0.9497          
+##  Mcnemar's Test P-Value : 9.725e-05       
+## 
+## Statistics by Class:
+## 
+##                      Class: A Class: B Class: C Class: D Class: E
+## Sensitivity            0.9812   0.9394   0.9532   0.9425   0.9723
+## Specificity            0.9893   0.9823   0.9830   0.9963   0.9991
+## Pos Pred Value         0.9733   0.9272   0.9222   0.9806   0.9957
+## Neg Pred Value         0.9925   0.9854   0.9900   0.9888   0.9938
+## Prevalence             0.2845   0.1935   0.1744   0.1639   0.1838
+## Detection Rate         0.2791   0.1817   0.1662   0.1545   0.1787
+## Detection Prevalence   0.2868   0.1960   0.1802   0.1575   0.1795
+## Balanced Accuracy      0.9852   0.9608   0.9681   0.9694   0.9857</code></pre>
+<p>From the above, you can see that randomForest is the better performing algorithm with <strong>0.43%</strong> out-of-bag (OOB) error rate, which is what we expect the out of sample error rate to be. When applied to the validation set for cross validation, the model achieved an accuracy of <strong>99.7%</strong>, which indicates the actual error rate is <strong>0.3%</strong>, where as GBM has an accuracy of <strong>96.0%</strong> with error rate of <strong>4.0%</strong>.</p>
+</div>
+<div id="result" class="section level2">
+<h2>Result</h2>
+<p>I can apply the randomForest model to the 20 given test set for the predictions. The results were all correct.</p>
+<pre class="r"><code><em># apply random forest model to test set
+predict(rfFit, test)</em></code></pre>
+<pre><code>##  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 
+##  B  A  B  A  A  E  D  B  A  A  B  C  B  A  E  E  A  B  B  B 
+## Levels: A B C D E</code></pre>
+</div>
+
+
+</div>
+
+<script>
+// add bootstrap table styles to pandoc tables
+$(document).ready(function () {
+  $('tr.header').parent('thead').parent('table').addClass('table table-condensed');
+});
+</script>
+
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+  (function () {
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src  = "https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML";
+    document.getElementsByTagName("head")[0].appendChild(script);
+  })();
+</script>
+
+</body>
+</html>
